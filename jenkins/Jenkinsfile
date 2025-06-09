@@ -1,0 +1,84 @@
+pipeline {
+    agent any
+
+    environment {
+        VERSION_FILE = 'versions.txt'
+    }
+
+    stages {
+        stage('Code Pull') {
+            steps {
+                echo 'Getting code from GitHub'
+                git url: 'https://github.com/Ansalpandey/Jenkins-Practice.git', branch: 'master'
+                echo 'Cloning code from GitHub successful.'
+            }
+        }
+
+        stage('Check versions.txt presence') {
+            steps {
+                echo 'Listing files in workspace:'
+                bat 'dir'
+
+                script {
+                    if (fileExists(env.VERSION_FILE)) {
+                        echo "${env.VERSION_FILE} found, contents:"
+                        bat "type ${env.VERSION_FILE}"
+                    } else {
+                        error "${env.VERSION_FILE} not found."
+                    }
+                }
+            }
+        }
+
+        stage('Read Version') {
+            steps {
+                script {
+                    if (fileExists(env.VERSION_FILE)) {
+                        echo "${env.VERSION_FILE} found, reading version..."
+                        def version = readFile(env.VERSION_FILE).trim()
+                        env.NEW_VERSION = version
+                        echo "Using version from file: ${env.NEW_VERSION}"
+                    } else {
+                        error "${env.VERSION_FILE} not found!"
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo 'Building the code'
+                bat 'gradlew.bat clean build'
+            }
+        }
+
+        stage('Docker Image build') {
+            steps {
+                echo "Building Docker Image with tag: ${env.NEW_VERSION}"
+                bat "docker build -t ansalpandey/jenkins-spring-boot:${env.NEW_VERSION} ."
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                echo "Pushing image ansalpandey/jenkins-spring-boot:${env.NEW_VERSION} to Docker Hub"
+                withCredentials([usernamePassword(
+                    credentialsId: "dockerHubCred",
+                    usernameVariable: "dockerHubUser",
+                    passwordVariable: "dockerHubPass"
+                )]) {
+                    bat """docker login -u %dockerHubUser% -p %dockerHubPass%"""
+                    bat """docker tag ansalpandey/jenkins-spring-boot:${env.NEW_VERSION} %dockerHubUser%/jenkins-spring-boot:${env.NEW_VERSION}"""
+                    bat """docker push %dockerHubUser%/jenkins-spring-boot:${env.NEW_VERSION}"""
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "Running container with version: ${env.NEW_VERSION}"
+                bat "docker run -d -p 8000:8000 ansalpandey/jenkins-spring-boot:${env.NEW_VERSION}"
+            }
+        }
+    }
+}
